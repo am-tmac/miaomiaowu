@@ -186,7 +186,7 @@ func addDirToZip(zipWriter *zip.Writer, srcDir, baseInZip string) error {
 		}
 
 		// Skip hidden files and special files
-		if strings.HasPrefix(info.Name(), ".") {
+		if !info.Mode().IsRegular() || strings.HasPrefix(info.Name(), ".") {
 			return nil
 		}
 
@@ -232,6 +232,9 @@ func extractBackup(zipPath string) error {
 	hasData := false
 	hasSubscribes := false
 	for _, f := range reader.File {
+		if mode := f.Mode(); !mode.IsRegular() && !mode.IsDir() {
+			return fmt.Errorf("unsupported backup entry type: %s", f.Name)
+		}
 		if strings.HasPrefix(f.Name, "data/") {
 			hasData = true
 		}
@@ -243,6 +246,20 @@ func extractBackup(zipPath string) error {
 	if !hasData && !hasSubscribes {
 		return errors.New("备份文件格式无效：缺少 data 或 subscribes 目录")
 	}
+
+	// Pin each allowed directory independently: a link from data into subscribes
+	// must not expand the authority of a data/ archive entry.
+	cwd, err := os.OpenRoot(".")
+	if err != nil {
+		return err
+	}
+	defer cwd.Close()
+	roots := make(map[string]*os.Root)
+	defer func() {
+		for _, root := range roots {
+			root.Close()
+		}
+	}()
 
 	// Extract files
 	for _, f := range reader.File {
@@ -256,17 +273,41 @@ func extractBackup(zipPath string) error {
 			continue
 		}
 
-		destPath := f.Name
+		rootName, relative, _ := strings.Cut(f.Name, "/")
+		root := roots[rootName]
+		if root == nil {
+			if err := cwd.Mkdir(rootName, 0755); err != nil && !os.IsExist(err) {
+				return err
+			}
+			info, err := cwd.Lstat(rootName)
+			if err != nil || !info.IsDir() {
+				return fmt.Errorf("backup root %s must be a real directory", rootName)
+			}
+			root, err = cwd.OpenRoot(rootName)
+			if err != nil {
+				return err
+			}
+			opened, err := root.Stat(".")
+			if err != nil || !os.SameFile(info, opened) {
+				root.Close()
+				return fmt.Errorf("backup root %s changed during open", rootName)
+			}
+			roots[rootName] = root
+		}
+		destPath := filepath.FromSlash(relative)
+		if destPath == "" {
+			destPath = "."
+		}
 
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(destPath, 0755); err != nil {
+			if err := root.MkdirAll(destPath, 0755); err != nil {
 				return fmt.Errorf("failed to create directory %s: %w", destPath, err)
 			}
 			continue
 		}
 
 		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 			return fmt.Errorf("failed to create parent directory for %s: %w", destPath, err)
 		}
 
@@ -276,7 +317,7 @@ func extractBackup(zipPath string) error {
 			return fmt.Errorf("failed to open zip file %s: %w", f.Name, err)
 		}
 
-		destFile, err := os.Create(destPath)
+		destFile, err := root.Create(destPath)
 		if err != nil {
 			srcFile.Close()
 			return fmt.Errorf("failed to create file %s: %w", destPath, err)

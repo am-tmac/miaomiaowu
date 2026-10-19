@@ -1,0 +1,63 @@
+# Trusted reverse proxies and client IP addresses
+
+`GetClientIP` supplies login/subscription rate limits, brute-force protection,
+audit logs and captcha verification. Forwarding headers are not authentication.
+
+## Migration / configuration
+
+The default (unset or empty `TRUSTED_PROXIES`) trusts **no proxies**, including
+loopback and private networks. Direct deployments need no changes. Behind a
+reverse proxy, set this environment variable on the **miaomiaowu server process**
+(or in the container's environment) and restart it, for example:
+
+```text
+TRUSTED_PROXIES=127.0.0.1,::1
+TRUSTED_PROXIES=172.20.0.2,2001:db8:1234::/64
+```
+
+These are examples, not recommended universal ranges: configure the actual
+socket addresses of your own proxies. Entries are comma-separated literal IPv4
+or IPv6 addresses or CIDRs (whitespace around entries is accepted). Hostnames,
+ports, empty entries and invalid values are not accepted. **Any malformed entry
+disables all header trust**, rather than partially accepting the list. Prefer
+individual addresses or narrow dedicated proxy networks. Do not trust all of
+Docker's/private address space or `0.0.0.0/0` / `::/0`: that lets clients in those
+networks supply arbitrary identities. IPv4-mapped IPv6 client/peer addresses are
+normalized to IPv4; use IPv4 CIDRs for those addresses.
+
+Without configuration, reverse-proxied clients share the socket proxy's IP and
+therefore limiter buckets. This intentional fail-closed change replaces the old
+unconditional trust. If local-IP limiter exemptions are enabled, ensure the proxy
+is configured correctly or disable those exemptions: the fallback socket address
+can be local. Firewall the origin so untrusted clients cannot bypass the intended
+proxy path.
+
+## Header contract
+
+* Only a trusted `RemoteAddr` can activate forwarding-header processing.
+* `X-Forwarded-For` takes precedence. All header fields are combined in wire order;
+  the chain is walked **right to left**, discarding only explicitly trusted hops.
+  The first untrusted address is the client; attacker-supplied values to its left
+  cannot override it. If every hop is trusted, the leftmost address is returned.
+* Each proxy must append its actual incoming socket peer to XFF, or replace XFF
+  with a client IP it has independently authenticated. Never blindly relay XFF.
+  Configure every legitimate intermediate proxy's IP/CIDR when walking past it
+  is desired; otherwise that intermediate becomes the client boundary.
+* Malformed/empty hops reached during the walk fall back to the socket peer.
+  No weaker header is consulted after a malformed XFF. Header addresses must be
+  literal IPs, without ports, brackets, zones or `unknown` values.
+* Only when XFF is absent, a single valid `X-Real-IP` is supported for deployment
+  compatibility. The trusted proxy **must overwrite** this header with the
+  verified client IP, never preserve an incoming user-supplied value. Multiple
+  fields or malformed values fall back to the socket peer.
+* `CF-Connecting-IP` is **always ignored**, even from a trusted non-Cloudflare
+  proxy. Trusting a proxy's socket does not prove Cloudflare supplied that header.
+  Existing Cloudflare deployments should use Cloudflare's XFF chain, allowlist
+  Cloudflare's current published egress CIDRs, and restrict direct origin access.
+  For Cloudflare → nginx → app, trust both controlled hop sets and preserve the
+  appended XFF chain. If converting CF-Connecting-IP into X-Real-IP/XFF at nginx,
+  do so only after authenticating that the incoming peer is Cloudflare; overwrite
+  the destination header and reject/ignore that source header on all other paths.
+
+Invalid socket addresses never activate header trust and use a shared empty IP
+key (normal Go HTTP requests always have a valid socket address).

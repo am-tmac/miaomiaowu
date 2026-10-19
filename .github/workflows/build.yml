@@ -190,8 +190,9 @@ jobs:
       - name: Create checksums
         run: |
           cd release
-          # 使用通配符更简洁
-          sha256sum mmw-* > checksums.txt
+          # Hash the raw executables actually uploaded below, not artifact ZIPs.
+          sha256sum mmw-* > SHA256SUMS
+          cp SHA256SUMS checksums.txt # compatibility with existing manual installs
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -206,5 +207,18 @@ jobs:
             release/mmw-linux-arm64
             release/mmw-windows-amd64.exe
             release/checksums.txt
+            release/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published asset SHA256 digests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > release-metadata.json
+          while read -r checksum filename; do
+            digest=$(jq -er --arg name "$filename" '.assets[] | select(.name == $name) | .digest' release-metadata.json)
+            test "$digest" = "sha256:$checksum" || { echo "Missing/mismatched GitHub SHA256 digest for $filename" >&2; exit 1; }
+          done < release/SHA256SUMS

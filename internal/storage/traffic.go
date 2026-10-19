@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2464,44 +2465,40 @@ func (r *TrafficRepository) ValidateUserToken(ctx context.Context, token string)
 	return username, nil
 }
 
-// generateFileShortCode generates a random 3-character string for file short codes.
+// generateFileShortCode preserves the legacy three-character file identifier.
 func generateFileShortCode() (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	const length = 3
-
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", fmt.Errorf("generate random bytes: %w", err)
-	}
-
-	for i := range bytes {
-		bytes[i] = charset[int(bytes[i])%len(charset)]
-	}
-
-	return string(bytes), nil
+	return generateShortCode(rand.Reader, 3)
 }
 
-// generateUserShortCode generates a random 3-character string for user short codes.
+// generateUserShortCode preserves the existing random length range (3..10).
+// Length is not a security guarantee: short codes still need rate limiting.
 func generateUserShortCode() (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-	// 随机长度 3-10 位 + 不可由用户自定义,使短码不可枚举,消除自定义短码冲突可用性预言机。
-	lenByte := make([]byte, 1)
-	if _, err := rand.Read(lenByte); err != nil {
+	var lengthByte [1]byte
+	if _, err := io.ReadFull(rand.Reader, lengthByte[:]); err != nil {
 		return "", fmt.Errorf("generate random length: %w", err)
 	}
-	length := 3 + int(lenByte[0])%8 // 3..10
+	// Eight divides 256, so this length selection has no modulo bias.
+	return generateShortCode(rand.Reader, 3+int(lengthByte[0])%8)
+}
 
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", fmt.Errorf("generate random bytes: %w", err)
+// generateShortCode rejects the incomplete tail of the byte range so every
+// base62 character has exactly four possible input bytes.
+func generateShortCode(reader io.Reader, length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const limit = 256 - 256%len(charset)
+	code := make([]byte, length)
+	var sample [1]byte
+	for i := 0; i < length; {
+		if _, err := io.ReadFull(reader, sample[:]); err != nil {
+			return "", fmt.Errorf("generate random bytes: %w", err)
+		}
+		if int(sample[0]) >= limit {
+			continue
+		}
+		code[i] = charset[int(sample[0])%len(charset)]
+		i++
 	}
-
-	for i := range bytes {
-		bytes[i] = charset[int(bytes[i])%len(charset)]
-	}
-
-	return string(bytes), nil
+	return string(code), nil
 }
 
 // generateMissingFileShortCodes generates file short codes for subscribe_files that don't have one.

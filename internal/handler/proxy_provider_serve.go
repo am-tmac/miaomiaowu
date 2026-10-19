@@ -10,6 +10,8 @@ import (
 	"miaomiaowu/internal/logger"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,8 +26,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// GeoIP 缓存和 API 配置
-const ipInfoToken = "cddae164b36656"
+// GeoIP is opt-in: configure your own IPINFO_TOKEN; an empty token disables lookups.
 
 type geoIPResponse struct {
 	IP          string `json:"ip"`
@@ -54,7 +55,8 @@ func InvalidateSubscriptionContentCache(url string) {
 
 // getGeoIPCountryCode 查询 IP 的国家代码
 func getGeoIPCountryCode(ipOrHost string) string {
-	if ipOrHost == "" {
+	ipInfoToken := strings.TrimSpace(os.Getenv("IPINFO_TOKEN"))
+	if ipInfoToken == "" || ipOrHost == "" {
 		return ""
 	}
 
@@ -77,9 +79,10 @@ func getGeoIPCountryCode(ipOrHost string) string {
 
 	// 查询 API
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://api.ipinfo.io/lite/%s?token=%s", ip, ipInfoToken))
+	resp, err := client.Get(fmt.Sprintf("https://api.ipinfo.io/lite/%s?token=%s", ip, url.QueryEscape(ipInfoToken)))
 	if err != nil {
-		logger.Info("[GeoIP] IP查询失败", "ip", ip, "error", err)
+		// HTTP errors may include the request URL and token; do not log them.
+		logger.Info("[GeoIP] IP查询失败", "ip", ip)
 		// 缓存空结果避免重复查询
 		geoIPCache.Store(ip, "")
 		return ""

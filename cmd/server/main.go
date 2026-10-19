@@ -330,7 +330,7 @@ func main() {
 		path := strings.Trim(r.URL.Path, "/")
 		clientIP := handler.GetClientIP(r)
 
-		isTempSub := strings.HasPrefix(path, "t/") && len(path) == 10
+		isTempSub := isTemporarySubscriptionPath(path)
 
 		// 短链探测候选：单段字母数字路径，且不是已知前端 SPA 路由。
 		// 仅这类路径才参与暴力探测计数/封禁；SPA 路由(/nodes 等)、静态资源、
@@ -349,7 +349,7 @@ func main() {
 			return
 		}
 
-		// Check if this is a temporary subscription access (starts with "t/" followed by 8 hex chars)
+		// Temporary subscription access: t/ followed by 32 hex characters.
 		if isTempSub {
 			rec := &handler.StatusRecorder{ResponseWriter: w, StatusCode: 200}
 			tempSubAccessHandler.ServeHTTP(rec, r)

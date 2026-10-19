@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -20,7 +23,7 @@ import (
 )
 
 const (
-	githubRepo   = "iluobei/miaomiaowu"
+	githubRepo   = "am-tmac/miaomiaowu"
 	githubAPIURL = "https://api.github.com/repos/%s/releases/latest"
 )
 
@@ -31,6 +34,7 @@ type UpdateInfo struct {
 	HasUpdate      bool   `json:"has_update"`
 	ReleaseURL     string `json:"release_url"`
 	DownloadURL    string `json:"download_url"`
+	SHA256         string `json:"-"`
 	ReleaseNotes   string `json:"release_notes"`
 }
 
@@ -49,6 +53,7 @@ type GitHubRelease struct {
 	Assets  []struct {
 		Name               string `json:"name"`
 		BrowserDownloadURL string `json:"browser_download_url"`
+		Digest             string `json:"digest"`
 	} `json:"assets"`
 }
 
@@ -99,7 +104,7 @@ func NewUpdateApplyHandler() http.Handler {
 
 		// 2. Download new binary to temp file
 		logger.Info("[系统更新] 开始下载更新", "url", info.DownloadURL)
-		tempFile, err := downloadBinary(info.DownloadURL)
+		tempFile, err := downloadVerifiedBinary(info.DownloadURL, info.SHA256, nil, nil)
 		if err != nil {
 			writeUpdateError(w, http.StatusInternalServerError, fmt.Errorf("下载失败: %w", err))
 			return
@@ -196,7 +201,7 @@ func NewUpdateApplySSEHandler() http.Handler {
 		logger.Info("[系统更新] 开始下载更新", "url", info.DownloadURL)
 
 		lastProgress := 0
-		tempFile, err := downloadBinaryWithProgressAndRetry(info.DownloadURL, func(downloaded, total int64) {
+		tempFile, err := downloadVerifiedBinary(info.DownloadURL, info.SHA256, func(downloaded, total int64) {
 			progress := int(downloaded * 100 / total)
 			// Only send update every 5% to reduce traffic
 			if progress >= lastProgress+5 || progress == 100 {
@@ -258,7 +263,15 @@ func NewUpdateApplySSEHandler() http.Handler {
 
 // checkLatestVersion fetches the latest release info from GitHub
 func checkLatestVersion() (*UpdateInfo, error) {
-	url := fmt.Sprintf(githubAPIURL, githubRepo)
+	repo := os.Getenv("UPDATE_GITHUB_REPO")
+	if repo == "" {
+		repo = githubRepo
+	}
+	validRepo := regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,100}$`)
+	if !validRepo.MatchString(repo) || strings.Split(repo, "/")[1] == "." || strings.Split(repo, "/")[1] == ".." {
+		return nil, errors.New("UPDATE_GITHUB_REPO must be a GitHub owner/repository, not a URL")
+	}
+	url := fmt.Sprintf(githubAPIURL, repo)
 	logger.Debug("[系统更新] 检查更新", "url", url)
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -294,10 +307,17 @@ func checkLatestVersion() (*UpdateInfo, error) {
 	osName := runtime.GOOS
 	binaryName := fmt.Sprintf("mmw-%s-%s", osName, arch)
 
-	var downloadURL string
+	var downloadURL, expectedSHA256 string
 	for _, asset := range release.Assets {
 		if asset.Name == binaryName {
 			downloadURL = asset.BrowserDownloadURL
+			if !strings.HasPrefix(asset.Digest, "sha256:") {
+				return nil, errors.New("release asset is missing a GitHub SHA256 digest; automatic update refused")
+			}
+			expectedSHA256 = strings.TrimPrefix(asset.Digest, "sha256:")
+			if err := validateUpdateSHA256(expectedSHA256); err != nil {
+				return nil, err
+			}
 			break
 		}
 	}
@@ -311,6 +331,7 @@ func checkLatestVersion() (*UpdateInfo, error) {
 		HasUpdate:      hasUpdate,
 		ReleaseURL:     release.HTMLURL,
 		DownloadURL:    downloadURL,
+		SHA256:         expectedSHA256,
 		ReleaseNotes:   release.Body,
 	}, nil
 }
@@ -350,6 +371,51 @@ func parseVersion(v string) []int {
 		result[i] = num
 	}
 	return result
+}
+
+// validateUpdateSHA256 rejects missing/invalid digests before any binary download.
+func validateUpdateSHA256(digest string) error {
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size {
+		return errors.New("missing or invalid SHA256 digest; automatic update refused")
+	}
+	return nil
+}
+
+// downloadVerifiedBinary verifies the exact executable bytes, including proxy retries,
+// before returning a path that either update handler may install.
+func downloadVerifiedBinary(url, digest string, onProgress func(int64, int64), onRetry func(string)) (string, error) {
+	if err := validateUpdateSHA256(digest); err != nil {
+		return "", err
+	}
+	name, err := downloadBinaryWithProgressAndRetry(url, onProgress, onRetry)
+	if err != nil {
+		return "", err
+	}
+	verified := false
+	defer func() {
+		if !verified {
+			os.Remove(name)
+		}
+	}()
+	file, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	_, err = io.Copy(hash, file)
+	closeErr := file.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), digest) {
+		return "", errors.New("SHA256 mismatch; automatic update refused")
+	}
+	verified = true
+	return name, nil
 }
 
 // downloadBinary downloads the binary to a temp file
