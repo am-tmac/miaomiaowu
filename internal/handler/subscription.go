@@ -1070,10 +1070,10 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	)
 
 	if n := GetNotifier(); n != nil {
-		go n.Send(context.Background(), notify.Event{
+		go n.SendDetached(notify.Event{
 			Type:    notify.EventSubscribeFetch,
 			Title:   "订阅获取",
-			Message: fmt.Sprintf("用户 `%s` 获取了订阅 `%s`\n客户端: %s", username, displayName, clientType),
+			Message: fmt.Sprintf("用户 <code>%s</code> 获取了订阅 <code>%s</code>\n客户端: %s", notify.EscapeHTML(username), notify.EscapeHTML(displayName), notify.EscapeHTML(clientType)),
 		})
 	}
 

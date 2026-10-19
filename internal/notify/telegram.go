@@ -3,9 +3,12 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -22,29 +25,38 @@ func sendTelegram(ctx context.Context, botToken, chatID, text string) error {
 	params := url.Values{
 		"chat_id":    {chatID},
 		"text":       {text},
-		"parse_mode": {"Markdown"},
+		"parse_mode": {"HTML"},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(params.Encode()))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create telegram request: invalid endpoint")
 	}
-	req.URL.RawQuery = params.Encode()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("send telegram: %w", err)
+		// Do not expose url.Error: its URL contains the bot credential, and
+		// even its underlying transport error may repeat that URL.
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("send telegram: %w", context.Canceled)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("send telegram: %w", context.DeadlineExceeded)
+		}
+		return fmt.Errorf("send telegram: transport request failed")
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		var result struct {
-			OK          bool   `json:"ok"`
-			Description string `json:"description"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&result)
-		return fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, result.Description)
+	var result struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
 	}
-
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil {
+		return fmt.Errorf("telegram API error (status %d): invalid JSON response", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK || !result.OK {
+		return fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, strings.ReplaceAll(result.Description, botToken, "[REDACTED]"))
+	}
 	return nil
 }

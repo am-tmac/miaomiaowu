@@ -290,19 +290,19 @@ func (s *NodeProbeScheduler) notifyStateChange(ctx context.Context, t storage.Pr
 		return
 	}
 	if down {
-		go n.Send(ctx, notify.Event{
+		go n.SendDetached(notify.Event{
 			Type:  notify.EventNodeProbeOffline,
 			Title: "节点不可用",
-			Message: fmt.Sprintf("节点 `%s`(%s)连续 %d 次探测失败,已判定不可用。",
-				t.NodeName, t.Protocol, state.FailStreak),
+			Message: fmt.Sprintf("节点 <code>%s</code>(%s)连续 %d 次探测失败,已判定不可用。",
+				notify.EscapeHTML(t.NodeName), notify.EscapeHTML(t.Protocol), state.FailStreak),
 		})
 		return
 	}
-	go n.Send(ctx, notify.Event{
+	go n.SendDetached(notify.Event{
 		Type:  notify.EventNodeProbeOnline,
 		Title: "节点已恢复",
-		Message: fmt.Sprintf("节点 `%s`(%s)探测已恢复,当前延迟 %d ms。",
-			t.NodeName, t.Protocol, lastLatency(state)),
+		Message: fmt.Sprintf("节点 <code>%s</code>(%s)探测已恢复,当前延迟 %d ms。",
+			notify.EscapeHTML(t.NodeName), notify.EscapeHTML(t.Protocol), lastLatency(state)),
 	})
 }
 

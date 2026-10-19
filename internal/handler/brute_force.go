@@ -214,10 +214,10 @@ func (p *BruteForceProtector) RecordFailure(ip, path string) {
 		p.persistBan(ip, path, rec.count, rec.blockUntil, false, "")
 
 		if n := GetNotifier(); n != nil {
-			go n.Send(context.Background(), notify.Event{
+			go n.SendDetached(notify.Event{
 				Type:    notify.EventIPBan,
 				Title:   "IP 封禁",
-				Message: fmt.Sprintf("IP `%s` 已被封禁\n触发路径: `%s`\n失败次数: %d\n封禁至: %s", ip, path, rec.count, rec.blockUntil.Format("2006-01-02 15:04:05")),
+				Message: fmt.Sprintf("IP <code>%s</code> 已被封禁\n触发路径: <code>%s</code>\n失败次数: %d\n封禁至: %s", notify.EscapeHTML(ip), notify.EscapeHTML(path), rec.count, rec.blockUntil.Format("2006-01-02 15:04:05")),
 			})
 		}
 	} else {

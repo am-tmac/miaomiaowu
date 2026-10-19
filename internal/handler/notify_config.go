@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"miaomiaowu/internal/auth"
 	"miaomiaowu/internal/notify"
@@ -104,6 +105,15 @@ func handleUpdateNotifyConfig(w http.ResponseWriter, r *http.Request, repo *stor
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("invalid request body"))
 		return
+	}
+
+	// Empty retains the existing schedule, as with older clients.
+	if value := req.NotifyDailyTrafficTime; value != "" {
+		parsed, err := time.Parse("15:04", value)
+		if err != nil || parsed.Format("15:04") != value {
+			writeError(w, http.StatusBadRequest, errors.New("notify_daily_traffic_time must be HH:MM"))
+			return
+		}
 	}
 
 	sysCfg, err := repo.GetSystemConfig(r.Context())

@@ -56,6 +56,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build \
 # Final stage - use Debian slim for better QEMU compatibility
 FROM debian:bookworm-slim
 
+ENV TZ=Asia/Shanghai
+
 WORKDIR /app
 
 # Install ca-certificates for HTTPS requests and gosu for privilege dropping

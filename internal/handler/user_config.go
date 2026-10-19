@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -415,10 +414,10 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 			if payload.SilentMode {
 				status = "已开启"
 			}
-			go n.Send(context.Background(), notify.Event{
+			go n.SendDetached(notify.Event{
 				Type:    notify.EventSilentMode,
 				Title:   "静默模式变更",
-				Message: fmt.Sprintf("静默模式 %s", status),
+				Message: fmt.Sprintf("静默模式 %s", notify.EscapeHTML(status)),
 			})
 		}
 	}
