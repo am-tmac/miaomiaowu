@@ -240,6 +240,7 @@ func getAllowedProbeTypes() map[string]struct{} {
 		storage.ProbeTypeNezhaV0: {},
 		storage.ProbeTypeDstatus: {},
 		storage.ProbeTypeKomari:  {},
+		storage.ProbeTypeCFSM:    {},
 	}
 }
 

@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"miaomiaowu/internal/logger"
 	"math"
+	"miaomiaowu/internal/logger"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,8 +26,9 @@ import (
 const bytesPerGigabyte = 1073741824.0
 
 type TrafficSummaryHandler struct {
-	client *http.Client
-	repo   *storage.TrafficRepository
+	client     *http.Client
+	cfsmClient *http.Client
+	repo       *storage.TrafficRepository
 }
 
 type trafficSummaryResponse struct {
@@ -65,7 +66,9 @@ func NewTrafficSummaryHandler(repo *storage.TrafficRepository) *TrafficSummaryHa
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	return newTrafficSummaryHandler(client, repo)
+	h := newTrafficSummaryHandler(client, repo)
+	h.cfsmClient = newSSRFSafeHTTPClient(15 * time.Second)
+	return h
 }
 
 func newTrafficSummaryHandler(client *http.Client, repo *storage.TrafficRepository) *TrafficSummaryHandler {
@@ -89,6 +92,10 @@ func (h *TrafficSummaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	var probeErr error
 
 	totalLimit, totalRemaining, totalUsed, probeErr = h.fetchTotals(ctx, username, nil)
+	if errors.Is(probeErr, errCFSMUnavailable) {
+		writeError(w, http.StatusBadGateway, probeErr)
+		return
+	}
 	if probeErr != nil {
 		// Log the error but continue to try external subscription traffic
 		if errors.Is(probeErr, storage.ErrProbeConfigNotFound) {
@@ -148,6 +155,9 @@ func (h *TrafficSummaryHandler) RecordDailyUsage(ctx context.Context) error {
 	var probeErr error
 
 	totalLimit, totalRemaining, totalUsed, probeErr = h.fetchTotals(ctx, "", nil)
+	if errors.Is(probeErr, errCFSMUnavailable) {
+		return probeErr
+	}
 	if probeErr != nil {
 		if errors.Is(probeErr, storage.ErrProbeConfigNotFound) {
 			logger.Info("[流量记录] 探针未配置，仅使用外部订阅流量")
@@ -458,6 +468,8 @@ func (h *TrafficSummaryHandler) fetchTotals(ctx context.Context, username string
 		return h.fetchNezhaV0Totals(ctx, cfg)
 	case storage.ProbeTypeDstatus:
 		return h.fetchBatchSummary(ctx, cfg.Address, serverIDs)
+	case storage.ProbeTypeCFSM:
+		return h.fetchCFSMTotals(ctx, cfg)
 	case storage.ProbeTypeKomari:
 		return h.fetchKomariTotals(ctx, cfg)
 	default:
@@ -516,6 +528,8 @@ func (h *TrafficSummaryHandler) fetchTotalsByServerIDs(ctx context.Context, serv
 		return h.fetchNezhaV0Totals(ctx, cfg)
 	case storage.ProbeTypeDstatus:
 		return h.fetchBatchSummary(ctx, cfg.Address, serverIDs)
+	case storage.ProbeTypeCFSM:
+		return h.fetchCFSMTotals(ctx, cfg)
 	case storage.ProbeTypeKomari:
 		return h.fetchKomariTotals(ctx, cfg)
 	default:
@@ -1453,6 +1467,10 @@ func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r 
 		if f.StatsServerIDs != "" {
 			idList := strings.Split(f.StatsServerIDs, ",")
 			statsLimit, _, statsUsed, statsErr := h.fetchTotalsByServerIDs(ctx, idList)
+			if errors.Is(statsErr, errCFSMUnavailable) {
+				writeError(w, http.StatusBadGateway, statsErr)
+				return
+			}
 			if statsErr == nil {
 				if f.TrafficLimit != nil {
 					limitBytes = int64(*f.TrafficLimit * bytesPerGigabyte)
@@ -1464,6 +1482,10 @@ func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r 
 		} else if f.TrafficLimit != nil {
 			limitBytes = int64(*f.TrafficLimit * bytesPerGigabyte)
 			_, _, totalUsed, probeErr := h.fetchTotals(ctx, "", nil)
+			if errors.Is(probeErr, errCFSMUnavailable) {
+				writeError(w, http.StatusBadGateway, probeErr)
+				return
+			}
 			if probeErr == nil {
 				usedBytes = totalUsed
 			}
@@ -1480,6 +1502,10 @@ func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r 
 
 	// Fetch probe total traffic as default
 	probeLimit, _, probeUsed, probeErr := h.fetchTotals(ctx, "", nil)
+	if errors.Is(probeErr, errCFSMUnavailable) {
+		writeError(w, http.StatusBadGateway, probeErr)
+		return
+	}
 	if probeErr == nil {
 		resp.ProbeTotal = &probeTotal{
 			LimitGB: roundUpTwoDecimals(bytesToGigabytes(probeLimit)),
@@ -1504,12 +1530,19 @@ func (h *TrafficSummaryHandler) FetchTrafficSummaryForNotify(ctx context.Context
 	cfg, cfgErr := h.repo.GetProbeConfig(ctx)
 	if cfgErr == nil && len(cfg.Servers) > 0 {
 		limit, _, used, fetchErr := h.fetchTotals(ctx, "", nil)
+		if errors.Is(fetchErr, errCFSMUnavailable) {
+			err = fetchErr
+			return
+		}
 		if fetchErr == nil {
 			totalLimit += limit
 			totalUsed += used
 			perServer, perErr := h.fetchPerServerTraffic(ctx, cfg)
 			if perErr == nil {
 				probeServers = perServer
+			} else if cfg.ProbeType == storage.ProbeTypeCFSM {
+				err = perErr
+				return
 			}
 		}
 	}
@@ -1563,6 +1596,8 @@ func (h *TrafficSummaryHandler) fetchExternalSubsForNotify(ctx context.Context) 
 
 func (h *TrafficSummaryHandler) fetchPerServerTraffic(ctx context.Context, cfg storage.ProbeConfig) ([]ServerTraffic, error) {
 	switch cfg.ProbeType {
+	case storage.ProbeTypeCFSM:
+		return h.fetchCFSMPerServer(ctx, cfg)
 	case storage.ProbeTypeNezha:
 		return h.fetchNezhaPerServer(ctx, cfg)
 	case storage.ProbeTypeNezhaV0:
