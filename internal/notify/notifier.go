@@ -3,7 +3,11 @@ package notify
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
+
+	"miaomiaowu/internal/logger"
 )
 
 // Notifier manages sending Telegram notifications based on configuration.
@@ -69,8 +73,14 @@ func (n *Notifier) Send(ctx context.Context, event Event) error {
 	}
 
 	cfg := n.GetConfig()
-	text := fmt.Sprintf("*%s*\n%s", event.Title, event.Message)
-	return sendTelegram(ctx, cfg.BotToken, cfg.ChatID, text)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	text := fmt.Sprintf("<b>%s</b>\n%s", EscapeHTML(event.Title), event.Message)
+	err := sendTelegram(ctx, cfg.BotToken, cfg.ChatID, text)
+	if err != nil {
+		logger.Warn("[Notify] Telegram notification failed", "event_type", event.Type, "error", err)
+	}
+	return err
 }
 
 // SendTest sends a test message regardless of event type toggles.
@@ -79,5 +89,16 @@ func (n *Notifier) SendTest(ctx context.Context) error {
 	if cfg.BotToken == "" || cfg.ChatID == "" {
 		return fmt.Errorf("bot token or chat ID is empty")
 	}
-	return sendTelegram(ctx, cfg.BotToken, cfg.ChatID, "*测试通知*\n喵喵喵喵屋通知配置成功 ✓")
+	return sendTelegram(ctx, cfg.BotToken, cfg.ChatID, "<b>测试通知</b>\n喵喵喵喵屋通知配置成功 ✓")
+}
+
+// SendDetached sends independently of the originating request's lifetime.
+// Send supplies a deadline; callers may launch this method in a goroutine.
+func (n *Notifier) SendDetached(event Event) error {
+	return n.Send(context.Background(), event)
+}
+
+// EscapeHTML escapes dynamic text inserted into Telegram HTML messages.
+func EscapeHTML(text string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 }

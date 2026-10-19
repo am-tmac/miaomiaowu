@@ -295,10 +295,10 @@ func issueLoginSession(w http.ResponseWriter, r *http.Request, tokens *auth.Toke
 		"expires_at", expiry.Format("2006-01-02 15:04:05"))
 
 	if n := GetNotifier(); n != nil {
-		go n.Send(r.Context(), notify.Event{
+		go n.SendDetached(notify.Event{
 			Type:    notify.EventLogin,
 			Title:   "登录通知",
-			Message: fmt.Sprintf("用户 `%s` 登录成功\nIP: `%s`", user.Username, clientIP),
+			Message: fmt.Sprintf("用户 <code>%s</code> 登录成功\nIP: <code>%s</code>", notify.EscapeHTML(user.Username), notify.EscapeHTML(clientIP)),
 		})
 	}
 

@@ -14,7 +14,7 @@ import (
 func StartNotifyScheduler(ctx context.Context, repo *storage.TrafficRepository, trafficHandler *TrafficSummaryHandler) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	var lastDailyRun string
+	var lastDailyRun, lastExpiryRun string
 
 	for {
 		select {
@@ -28,19 +28,16 @@ func StartNotifyScheduler(ctx context.Context, repo *storage.TrafficRepository, 
 			cfg := n.GetConfig()
 
 			if cfg.NotifyDailyTraffic {
-				today := now.Format("2006-01-02")
-				nowTime := now.Format("15:04")
 				targetTime := cfg.DailyTrafficTime
 				if targetTime == "" {
 					targetTime = "08:00"
 				}
-				if nowTime == targetTime && lastDailyRun != today {
-					lastDailyRun = today
+				if notificationDue(now, targetTime, &lastDailyRun) {
 					go sendDailyTrafficNotification(ctx, trafficHandler, n)
 				}
 			}
 
-			if cfg.NotifyExpiry && now.Format("15:04") == "09:00" {
+			if cfg.NotifyExpiry && notificationDue(now, "09:00", &lastExpiryRun) {
 				go sendExpiryNotification(ctx, repo, n)
 			}
 		}
@@ -73,14 +70,14 @@ func sendDailyTrafficNotification(ctx context.Context, th *TrafficSummaryHandler
 	if len(probeServers) > 0 {
 		b.WriteString("\n\n— 服务器 —")
 		for _, s := range probeServers {
-			fmt.Fprintf(&b, "\n• %s: %.2f / %.2f GB", s.Name, s.UsedGB, s.LimitGB)
+			fmt.Fprintf(&b, "\n• %s: %.2f / %.2f GB", notify.EscapeHTML(s.Name), s.UsedGB, s.LimitGB)
 		}
 	}
 
 	if len(extSubs) > 0 {
 		b.WriteString("\n\n— 外部订阅 —")
 		for _, s := range extSubs {
-			fmt.Fprintf(&b, "\n• %s: %.2f / %.2f GB", s.Name, s.UsedGB, s.LimitGB)
+			fmt.Fprintf(&b, "\n• %s: %.2f / %.2f GB", notify.EscapeHTML(s.Name), s.UsedGB, s.LimitGB)
 		}
 	}
 
@@ -108,7 +105,7 @@ func sendExpiryNotification(ctx context.Context, repo *storage.TrafficRepository
 		}
 		if f.ExpireAt.After(now) && f.ExpireAt.Before(threeDaysLater) {
 			days := int(f.ExpireAt.Sub(now).Hours() / 24)
-			lines = append(lines, fmt.Sprintf("• %s: %d 天后到期", f.Name, days))
+			lines = append(lines, fmt.Sprintf("• %s: %d 天后到期", notify.EscapeHTML(f.Name), days))
 		}
 	}
 
@@ -122,4 +119,15 @@ func sendExpiryNotification(ctx context.Context, repo *storage.TrafficRepository
 		Title:   "订阅即将到期",
 		Message: msg,
 	})
+}
+
+// notificationDue claims a scheduled day for a job.
+func notificationDue(now time.Time, target string, lastRun *string) bool {
+	today := now.Format("2006-01-02")
+	scheduled, err := time.ParseInLocation("2006-01-02 15:04", today+" "+target, now.Location())
+	if err == nil && !now.Before(scheduled) && *lastRun != today {
+		*lastRun = today
+		return true
+	}
+	return false
 }

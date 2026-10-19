@@ -38,3 +38,5 @@ miaomiaowu.db
 VALIDATION_INTEGRATION_PLAN.md
 *.md
 bin/*
+Logs/
+
