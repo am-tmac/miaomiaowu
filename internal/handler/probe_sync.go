@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"miaomiaowu/internal/logger"
 	"math"
+	"miaomiaowu/internal/logger"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,8 +21,9 @@ import (
 )
 
 type probeSyncHandler struct {
-	client *http.Client
-	repo   *storage.TrafficRepository
+	client     *http.Client
+	cfsmClient *http.Client
+	repo       *storage.TrafficRepository
 }
 
 type probeSyncRequest struct {
@@ -47,7 +48,7 @@ func NewProbeSyncHandler(repo *storage.TrafficRepository) http.Handler {
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	return &probeSyncHandler{client: client, repo: repo}
+	return &probeSyncHandler{client: client, cfsmClient: newSSRFSafeHTTPClient(15 * time.Second), repo: repo}
 }
 
 func (h *probeSyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +84,8 @@ func (h *probeSyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		servers, err = h.fetchNezhaV0Servers(r.Context(), address)
 	case storage.ProbeTypeDstatus:
 		servers, err = h.fetchDstatusServers(r.Context(), address)
+	case storage.ProbeTypeCFSM:
+		servers, err = h.fetchCFSMInventory(r.Context(), address)
 	case storage.ProbeTypeKomari:
 		servers, err = h.fetchKomariServers(r.Context(), address)
 	default:

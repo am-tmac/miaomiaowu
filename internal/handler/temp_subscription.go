@@ -17,12 +17,12 @@ import (
 
 // TempSubscription represents a temporary subscription
 type TempSubscription struct {
-	ID           string    `json:"id"`
-	Proxies      []any     `json:"proxies"`
-	MaxAccess    int       `json:"max_access"`
-	AccessCount  int       `json:"access_count"`
-	ExpireAt     time.Time `json:"expire_at"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Proxies     []any     `json:"proxies"`
+	MaxAccess   int       `json:"max_access"`
+	AccessCount int       `json:"access_count"`
+	ExpireAt    time.Time `json:"expire_at"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // TempSubscriptionStore manages temporary subscriptions in memory
@@ -36,9 +36,9 @@ var tempSubStore = &TempSubscriptionStore{
 	subscriptions: make(map[string]*TempSubscription),
 }
 
-// generateShortCode generates a random 8-character hex code
+// generateTempSubCode generates a 128-bit random bearer code (32 hex characters).
 func generateTempSubCode() string {
-	bytes := make([]byte, 4)
+	bytes := make([]byte, 16)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }
@@ -211,9 +211,15 @@ func (h *TempSubscriptionAccessHandler) ServeHTTP(w http.ResponseWriter, r *http
 	path := strings.TrimPrefix(r.URL.Path, "/t/")
 	id := strings.TrimSuffix(path, "/")
 
-	if id == "" || len(id) != 8 {
+	if len(id) != 32 {
 		http.NotFound(w, r)
 		return
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+			http.NotFound(w, r)
+			return
+		}
 	}
 
 	sub, err := tempSubStore.Get(id)

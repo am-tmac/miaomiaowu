@@ -7,6 +7,8 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { profileQueryFn } from '@/lib/profile'
+import { PROBE_TYPES, mergeCFSMInventory } from '@/lib/probe-types'
+import type { ProbeType } from '@/lib/probe-types'
 import { useAuthStore } from '@/stores/auth-store'
 import { DataTable } from '@/components/data-table'
 import type { DataTableColumn } from '@/components/data-table'
@@ -58,7 +60,7 @@ type ServerForm = {
 }
 
 type ProbeConfigResponse = {
-  probe_type: string
+  probe_type: ProbeType
   address: string
   servers: Array<{
     id: number
@@ -73,12 +75,6 @@ type ProbeConfigResponse = {
   updated_at?: string
 }
 
-const PROBE_TYPES = [
-  { value: 'nezha', label: '哪吒面板' },
-  { value: 'nezhav0', label: '哪吒 V0' },
-  { value: 'dstatus', label: 'DStatus' },
-  { value: 'komari', label: 'Komari' },
-]
 
 const TRAFFIC_METHODS = [
   { value: 'both', label: '上下行总和' },
@@ -372,6 +368,16 @@ function ProbeManagePage() {
         mapped = await fetchNezhaV0Servers(baseURL)
       } else if (formState.probeType === 'komari') {
         mapped = await fetchKomariServers(baseURL)
+      } else if (formState.probeType === 'cfsm') {
+        const response = await api.post('/api/admin/probe-sync', {
+          probe_type: 'cfsm',
+          address: baseURL,
+        })
+        mapped = mergeCFSMInventory(
+          response.data?.servers ?? [],
+          formState.servers,
+          generateKey
+        )
       } else {
         toast.error('当前探针类型暂不支持自动同步')
         return
@@ -582,9 +588,12 @@ function ProbeManagePage() {
                 <CardTitle>服务器列表</CardTitle>
                 <CardDescription>根据探针类型填写对应的服务器 ID、名称和流量统计方式。</CardDescription>
                 <p className='mt-2 text-sm font-semibold text-destructive'>请为每个服务器填写月流量（GB），该字段为必填项。</p>
+                {formState.probeType === 'cfsm' && (
+                  <p className='mt-2 text-sm text-muted-foreground'>CF-Server-Monitor 使用主机当月上行/下行累计字节，不代表单个代理节点流量（共享流量主机尤其如此）。月流量额度需手动填写；同步不会从探针推算额度。</p>
+                )}
               </div>
               <div className='flex flex-wrap gap-2'>
-                {['dstatus', 'nezha', 'nezhav0', 'komari'].includes(formState.probeType) ? (
+                {['dstatus', 'nezha', 'nezhav0', 'komari', 'cfsm'].includes(formState.probeType) ? (
                   <Button
                     type='button'
                     variant='secondary'

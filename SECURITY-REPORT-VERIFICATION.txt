@@ -1,0 +1,20 @@
+# Security report verification and hardening
+
+Scope: `am-tmac/miaomiaowu`, based on commit `8b92e23` (includes the CFSM integration). These are source fixes; no production deployment is performed.
+
+## Findings and operator actions
+
+- **M1 confirmed:** a third-party ipinfo credential was embedded in source. Set your own `IPINFO_TOKEN` to opt into GeoIP. With no token configured, no GeoIP lookup or DNS resolution is performed. The previously published credential remains in Git history; only its account owner can revoke it. Credential ownership and current validity were not tested.
+- **M2 confirmed:** forwarded headers were accepted without authenticating the immediate proxy peer. Configure `TRUSTED_PROXIES` narrowly using the addresses/CIDRs of proxies that actually connect to this application. The default trusts no proxies. A proxy must sanitize/overwrite headers it supplies; do not trust arbitrary network ranges. Review the trusted-proxy documentation for exact header handling.
+- **M3 confirmed:** the fork's updater pointed to upstream and downloaded executables without digest verification. The hardened updater uses this fork by default and supports `UPDATE_GITHUB_REPO`; checksum verification is required before replacement. Release SHA256 checksums detect corruption/mismatched artifacts, **not** compromise of the publisher or a release account that can replace both executable and checksum. Independently trusted signatures/provenance remain a separate control.
+- **L1 confirmed:** panel login credentials were accepted from URL query strings. Panel/SSE consumers must use header authentication. Subscription bearer URLs are a separate intentional client-compatibility feature and are not removed.
+- **L2 confirmed:** temporary subscription codes had only 4 random bytes. Codes now contain 16 random bytes (32 hex characters); the router is updated for that length. Temporary subscriptions are in-memory and already disappear on restart.
+- **L3 confirmed as a configuration hardening issue:** unauthenticated wildcard CORS alone does not bypass header-token authentication. Cross-origin access must be explicitly configured via `ALLOWED_ORIGINS` or `FRONTEND_ORIGIN`; same-origin panel access needs no CORS permission.
+- **L4 original exploit claim not reproduced as stated:** archive symlink entries were extracted as ordinary files, not created as filesystem symlinks. However, pre-existing filesystem symlinks could redirect extraction outside the backup roots, and backup creation could follow symlink files. Both need explicit confinement/handling; regression tests cover the actual failure mode.
+- **L5 confirmed:** modulo reduction biases the short-code alphabet. Rejection sampling removes this bias, but this is not a substitute for adequate length and rate limits. Randomizing a user's code length from 3 to 10 does **not** ensure all codes have high entropy; shortest legacy codes still merit caution.
+
+## Limits
+
+This is targeted verification of the supplied report, not a whole-repository proof of security. Blanket claims such as “all SSRF paths safe”, “all SQL parameterized”, “composite short-code entropy sufficient”, or “no high-risk vulnerabilities” require additional review and must not be inferred from these fixes. No leaked third-party credential is exercised. No destructive test runs against a deployed service.
+
+Verified locally after integration: go test ./... -count=1, go vet ./..., and go build ./cmd/server all pass using Go 1.26.9. Critical handler/auth/storage/server packages passed race detection before the final temporary-subscription access fix; the final fix additionally passed full-suite tests and vet/build. Actual frontend npm run build passed (existing chunk-size warning). The create-to-access regression checks real handlers with Mihomo and ClashMetaForAndroid user agents. No production deployment or remote release workflow execution was performed.

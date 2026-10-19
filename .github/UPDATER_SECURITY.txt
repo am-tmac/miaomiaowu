@@ -1,0 +1,38 @@
+# Automatic updater integrity and compatibility
+
+`UPDATE_GITHUB_REPO` selects the GitHub release source. It defaults to
+`am-tmac/miaomiaowu` for this fork. Set an explicit `owner/repository` to follow
+another trusted publisher (for example, `iluobei/miaomiaowu`). URLs, query strings,
+extra path components and whitespace are invalid; invalid configuration fails
+before contacting GitHub. Changing this setting changes whom you trust to publish
+executable code. It is a process environment setting, not a request parameter.
+
+Both ordinary and SSE updates require the selected executable asset's GitHub
+release API `digest` field to contain a valid `sha256:<64 hexadecimal digits>`.
+The expected digest comes from the direct HTTPS GitHub API response, never the
+optional download proxy. The updater hashes the downloaded file, including files
+obtained through the proxy, before any target-path preparation, backup or binary
+replacement. Mismatches remove the temporary download and abort the update.
+Missing, unsupported or malformed digests also abort; there is no unverified
+fallback. Release checking reports an error for a matching asset without a digest.
+
+The release workflow uploads **raw executables**, not the ZIP archives produced
+by GitHub Actions artifact storage. GitHub generates the uploaded asset's digest.
+The workflow also publishes `SHA256SUMS` and the legacy `checksums.txt`, both
+covering those exact raw executable bytes, and checks the published API digests
+against the locally computed hashes. `SHA256SUMS` is for manual verification;
+it is deliberately not a second, unauthenticated download fallback for the updater.
+Archive-only releases do not match the updater's raw `mmw-<os>-<arch>` naming and
+cannot be installed automatically. Existing Linux amd64/arm64 release names are
+unchanged; this change does not add Windows self-restart support.
+
+Older releases or alternative GitHub-compatible services that omit the asset
+digest are incompatible with automatic installation. Publish/re-upload compatible
+assets with a GitHub-generated digest, or install manually after independently
+validating the release. Do not disable verification to accommodate old assets.
+
+These SHA256 checks detect corruption or download/proxy substitution relative to
+GitHub metadata. They **do not** protect against a compromised release publisher,
+repository account, build pipeline, or GitHub metadata. Protecting against those
+requires signatures/provenance verified against an independently trusted identity;
+this updater does not implement that trust system.

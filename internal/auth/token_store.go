@@ -198,12 +198,9 @@ func randomToken(length int) (string, error) {
 
 func RequireToken(store *TokenStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Try header first
+		// Session credentials belong in headers, not URLs (including SSE requests).
+		// Subscription query tokens are handled separately by subscription endpoints.
 		token := strings.TrimSpace(r.Header.Get(AuthHeader))
-		// Fallback to query parameter (for SSE which doesn't support custom headers)
-		if token == "" {
-			token = strings.TrimSpace(r.URL.Query().Get("token"))
-		}
 		if username, ok := store.Lookup(token); ok {
 			ctx := ContextWithUsername(r.Context(), username)
 			next.ServeHTTP(w, r.WithContext(ctx))

@@ -15,9 +15,6 @@ func getAllowedOrigins() []string {
 }
 
 func parseAllowedOrigins(raw string) []string {
-	if raw == "" {
-		return []string{"*"}
-	}
 	parts := strings.Split(raw, ",")
 	var origins []string
 	for _, part := range parts {
@@ -25,9 +22,7 @@ func parseAllowedOrigins(raw string) []string {
 			origins = append(origins, trimmed)
 		}
 	}
-	if len(origins) == 0 {
-		return []string{"*"}
-	}
+	// Empty configuration grants no cross-origin access; same-origin needs no CORS.
 	return origins
 }
 
@@ -35,7 +30,7 @@ func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 	if next == nil {
 		return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	}
-	allowAll := len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*")
+	allowAll := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
