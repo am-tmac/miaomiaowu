@@ -60,7 +60,14 @@ func resolveClientType(r *http.Request) string {
 	if !strings.EqualFold(clientType, "auto") {
 		return clientType
 	}
-	return detectClientTypeFromUA(r.Header.Get("User-Agent"))
+	detected := detectClientTypeFromUA(r.Header.Get("User-Agent"))
+	// Shadowrocket's subscription importer consumes URI lists, not its full
+	// [General]/[Proxy] configuration. Preserve explicit ?t=shadowrocket for
+	// configuration downloads while auto subscriptions use base64 URIs.
+	if detected == "shadowrocket" {
+		return "v2ray"
+	}
+	return detected
 }
 
 // meowXClientType 订阅地址里显式选的客户端类型「MeowX」(?t=meowx),产出与 ?t=clash 相同。
